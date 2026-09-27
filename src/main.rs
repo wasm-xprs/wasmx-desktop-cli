@@ -39,10 +39,14 @@ async fn run() -> Result<()> {
         .to_str()
         .ok_or_else(|| anyhow!(".cli-flags.toml path is not UTF-8"))?;
     let parser = BundledFlags2Env::new();
-    parser\n        .audit_config(Some(config_path_text))\n        .map_err(|error| anyhow!(error.to_string()))?;
+    parser
+        .audit_config(Some(config_path_text))
+        .map_err(|error| anyhow!(error.to_string()))?;
 
     let argv = env::args().collect::<Vec<_>>();
-    let parsed = parser\n        .parse_structured(&argv, Some(config_path_text))\n        .map_err(|error| anyhow!(error.to_string()))?;
+    let parsed = parser
+        .parse_structured(&argv, Some(config_path_text))
+        .map_err(|error| anyhow!(error.to_string()))?;
     if !parsed.unknown_options.is_empty() {
         bail!(
             "unknown command-line options: {}",
@@ -62,7 +66,9 @@ async fn run() -> Result<()> {
     let mut raw = env::vars().collect::<HashMap<_, _>>();
     raw.remove("FLAGS2ENV_COMMAND");
     raw.extend(parsed.provided_flags);
-    let config = parser\n        .coerce::<CliConfig, _>(&raw, Some(config_path_text))\n        .map_err(|error| anyhow!(error.to_string()))?;
+    let config = parser
+        .coerce::<CliConfig, _>(&raw, Some(config_path_text))
+        .map_err(|error| anyhow!(error.to_string()))?;
 
     let command = config.FLAGS2ENV_COMMAND.as_deref().unwrap_or("");
     let timeout_ms = u64::try_from(config.WASMX_DESKTOP_TIMEOUT_MS)
