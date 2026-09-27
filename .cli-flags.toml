@@ -1,0 +1,95 @@
+[help]
+url = "https://github.com/wasm-xprs/wasmx-desktop-cli"
+columns = ["options", "env", "type", "default", "description"]
+
+[parse]
+stop_at_first_positional = false
+allow_unknown = false
+
+[env]
+ignore = ["WASMX_DESKTOP_TOKEN"]
+
+[commands.status]
+help = "Show local wasm-xprs Wasmtime daemon status."
+
+[commands.deploy]
+help = "Compile and install a Wasm deployment into the local daemon."
+
+[commands.deploy.flags.tenant]
+env = "WASMX_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id."
+
+[commands.deploy.flags.deployment]
+env = "WASMX_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment generation id."
+
+[commands.deploy.flags.module]
+env = "WASMX_DESKTOP_MODULE"
+aliases = ["module"]
+short = "m"
+type = "string"
+help = "Path to a .wasm module."
+
+[commands.invoke]
+help = "Invoke a local Wasm deployment."
+
+[commands.invoke.flags.tenant]
+env = "WASMX_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id."
+
+[commands.invoke.flags.deployment]
+env = "WASMX_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment generation id."
+
+[commands.invoke.flags.payload]
+env = "WASMX_DESKTOP_PAYLOAD"
+aliases = ["payload"]
+short = "p"
+type = "json"
+default = "{}"
+help = "JSON invocation payload."
+
+[commands.invoke.flags.fuel]
+env = "WASMX_DESKTOP_FUEL"
+aliases = ["fuel"]
+type = "integer"
+help = "Optional Wasmtime fuel budget."
+
+[commands.delete]
+help = "Delete a local deployment artifact."
+
+[commands.delete.flags.tenant]
+env = "WASMX_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id."
+
+[commands.delete.flags.deployment]
+env = "WASMX_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment generation id."
+
+[flags.url]
+env = "WASMX_DESKTOP_DAEMON_URL"
+aliases = ["url"]
+short = "u"
+type = "string"
+default = "http://127.0.0.1:8765"
+help = "Loopback URL of wasmx-desktop-daemon."
+
+[flags.timeout]
+env = "WASMX_DESKTOP_TIMEOUT_MS"
+aliases = ["timeout"]
+short = "t"
+type = "integer"
+default = 30000
+help = "Invocation timeout in milliseconds."
