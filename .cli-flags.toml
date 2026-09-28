@@ -12,6 +12,9 @@ ignore = ["WASMX_DESKTOP_TOKEN"]
 [commands.status]
 help = "Show local wasm-xprs Wasmtime daemon status."
 
+[commands.list]
+help = "List persisted local Wasm deployments."
+
 [commands.deploy]
 help = "Compile and install a Wasm deployment into the local daemon."
 

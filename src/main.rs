@@ -3,11 +3,13 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, net::IpAddr, path::PathBuf, time::Duration};
 use uuid::Uuid;
 
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
+const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_FUEL: u64 = 500_000_000;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
@@ -59,10 +61,7 @@ async fn run() -> Result<()> {
         bail!("invalid command-line values: {}", parsed.errors.join("; "));
     }
     if !parsed.extras.is_empty() {
-        bail!(
-            "unexpected positional arguments: {}",
-            parsed.extras.len()
-        );
+        bail!("unexpected positional arguments: {}", parsed.extras.len());
     }
 
     let mut raw = env::vars().collect::<HashMap<_, _>>();
@@ -78,17 +77,23 @@ async fn run() -> Result<()> {
         .filter(|value| *value > 0 && *value <= 1_200_000)
         .ok_or_else(|| anyhow!("--timeout must be between 1 and 1200000 ms"))?;
     let token = read_token()?;
-    let base_url = trim_url(&config.WASMX_DESKTOP_DAEMON_URL);
+    let base_url = validate_daemon_url(&config.WASMX_DESKTOP_DAEMON_URL)?;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(
-            timeout_ms.saturating_add(5_000),
-        ))
+        .timeout(Duration::from_millis(timeout_ms.saturating_add(5_000)))
         .build()?;
 
     match command {
         "status" => {
             let response = client
                 .get(format!("{base_url}/v1/status"))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            print_json_response(response).await?;
+        }
+        "list" => {
+            let response = client
+                .get(format!("{base_url}/v1/deployments"))
                 .bearer_auth(&token)
                 .send()
                 .await?;
@@ -105,10 +110,8 @@ async fn run() -> Result<()> {
                 bail!("module must be between 1 and {MAX_MODULE_BYTES} bytes");
             }
 
-            let ores_adapter = read_optional_ores_adapter(
-                config.WASMX_DESKTOP_ORES_ADAPTER.as_deref(),
-            )
-            .await?;
+            let ores_adapter =
+                read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -135,8 +138,8 @@ async fn run() -> Result<()> {
                 .map(|value| {
                     return u64::try_from(value)
                         .ok()
-                        .filter(|fuel| *fuel > 0)
-                        .ok_or_else(|| anyhow!("--fuel must be greater than zero"));
+                        .filter(|fuel| *fuel > 0 && *fuel <= MAX_FUEL)
+                        .ok_or_else(|| anyhow!("--fuel must be between 1 and {MAX_FUEL}"));
                 })
                 .transpose()?;
             let body = json!({
@@ -173,7 +176,7 @@ async fn run() -> Result<()> {
             println!("deleted {tenant_id}/{deployment_id}");
         }
         _ => {
-            bail!("command required: status, deploy, invoke or delete");
+            bail!("command required: status, list, deploy, invoke or delete");
         }
     }
 
@@ -195,9 +198,7 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
     if bytes.is_empty() || bytes.len() > MAX_ORES_ADAPTER_BYTES {
-        bail!(
-            "ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes"
-        );
+        bail!("ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes");
     }
     let value: Value = serde_json::from_slice(bytes).context("ORES adapter is not valid JSON")?;
     if !value.is_object() {
@@ -206,13 +207,28 @@ fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
     return Ok(value);
 }
 
-async fn print_json_response(response: reqwest::Response) -> Result<()> {
+async fn print_json_response(mut response: reqwest::Response) -> Result<()> {
     let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        bail!("daemon returned {status}: {body}");
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        bail!("daemon response exceeds {MAX_RESPONSE_BYTES} bytes");
     }
-    let value: Value = serde_json::from_str(&body).context("daemon response was not JSON")?;
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            bail!("daemon response exceeds {MAX_RESPONSE_BYTES} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    if !status.is_success() {
+        let text = String::from_utf8_lossy(&body);
+        bail!("daemon returned {status}: {text}");
+    }
+    let value: Value = serde_json::from_slice(&body).context("daemon response was not JSON")?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     return Ok(());
 }
@@ -223,8 +239,31 @@ fn required(value: Option<String>, flag: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("{flag} is required"));
 }
 
-fn trim_url(value: &str) -> &str {
-    return value.trim_end_matches('/');
+fn validate_daemon_url(value: &str) -> Result<String> {
+    let url = reqwest::Url::parse(value).context("daemon URL is invalid")?;
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("daemon URL must not embed credentials");
+    }
+    if url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
+        bail!("daemon URL must be an origin without a path, query, or fragment");
+    }
+    if !matches!(url.scheme(), "http" | "https") {
+        bail!("daemon URL scheme must be http or https");
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("daemon URL must contain a host"))?;
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if url.scheme() == "http" && !loopback {
+        bail!("plain HTTP daemon URLs are allowed only for loopback; use HTTPS remotely");
+    }
+
+    return Ok(url.as_str().trim_end_matches('/').to_owned());
 }
 
 fn resolve_config_path() -> Result<PathBuf> {
@@ -259,6 +298,11 @@ fn read_token() -> Result<String> {
         let home = env::var_os("HOME").ok_or_else(|| anyhow!("HOME is required"))?;
         PathBuf::from(home).join(".wasm-xprs/daemon/token")
     };
+    let metadata = std::fs::symlink_metadata(&path)
+        .with_context(|| format!("cannot inspect daemon token at {}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("daemon token path must be a regular non-symlink file");
+    }
     let token = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read daemon token at {}", path.display()))?;
     let token = token.trim();
@@ -271,6 +315,22 @@ fn read_token() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn daemon_url_rejects_remote_plaintext() -> Result<()> {
+        assert_eq!(
+            validate_daemon_url("http://127.0.0.1:8765")?,
+            "http://127.0.0.1:8765"
+        );
+        assert_eq!(
+            validate_daemon_url("http://localhost:8765")?,
+            "http://localhost:8765"
+        );
+        assert!(validate_daemon_url("http://example.com:8765").is_err());
+        assert!(validate_daemon_url("https://example.com/api").is_err());
+        assert!(validate_daemon_url("ftp://127.0.0.1").is_err());
+        return Ok(());
+    }
 
     #[test]
     fn ores_adapter_must_be_a_bounded_json_object() -> Result<()> {
