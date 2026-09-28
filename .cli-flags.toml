@@ -15,6 +15,21 @@ help = "Show local wasm-xprs Wasmtime daemon status."
 [commands.list]
 help = "List persisted local Wasm deployments."
 
+[commands.inspect]
+help = "Inspect one deployment and its integrity metadata."
+
+[commands.inspect.flags.tenant]
+env = "WASMX_DESKTOP_TENANT_ID"
+aliases = ["tenant"]
+type = "string"
+help = "Tenant id."
+
+[commands.inspect.flags.deployment]
+env = "WASMX_DESKTOP_DEPLOYMENT_ID"
+aliases = ["deployment"]
+type = "string"
+help = "Immutable deployment generation id."
+
 [commands.deploy]
 help = "Compile and install a Wasm deployment into the local daemon."
 
