@@ -129,7 +129,7 @@ async fn run() -> Result<()> {
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
-                "wasm_base64": BASE64.encode(bytes),
+                "wasm_base64": BASE64.encode(&bytes),
             });
             if let Some(adapter) = ores_adapter {
                 body["ores_adapter"] = adapter;
