@@ -259,7 +259,13 @@ async fn run() -> Result<()> {
     return Ok(());
 }
 
-async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>> {
+#[derive(Debug)]
+struct OresAdapterInput {
+    value: Value,
+    sha256: String,
+}
+
+async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<OresAdapterInput>> {
     let Some(path) = path else {
         return Ok(None);
     };
@@ -269,7 +275,11 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
     let bytes = tokio::fs::read(path)
         .await
         .with_context(|| format!("cannot read ORES adapter {path}"))?;
-    return parse_ores_adapter_bytes(&bytes).map(Some);
+    let value = parse_ores_adapter_bytes(&bytes)?;
+    return Ok(Some(OresAdapterInput {
+        value,
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+    }));
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
@@ -281,6 +291,62 @@ fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
         bail!("ORES adapter must be a JSON object");
     }
     return Ok(value);
+}
+
+async fn validate_optional_ores_receipt(
+    path: Option<&str>,
+    provider: &str,
+    runtime_contract: &str,
+    artifact_sha256: &str,
+    adapter_sha256: Option<&str>,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if path.trim().is_empty() {
+        bail!("--ores-receipt must name a readable JSON file");
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("cannot read ORES receipt {path}"))?;
+    if bytes.is_empty() || bytes.len() > MAX_ORES_RECEIPT_BYTES {
+        bail!("ORES receipt must be between 1 and {MAX_ORES_RECEIPT_BYTES} bytes");
+    }
+    let value: Value =
+        serde_json::from_slice(&bytes).context("ORES receipt is not valid JSON")?;
+    if value.get("schema_version").and_then(Value::as_str)
+        != Some("ores.lambda.wasm-artifact.receipt/v1")
+    {
+        bail!("ORES receipt schema_version is not ores.lambda.wasm-artifact.receipt/v1");
+    }
+    if value.get("provider").and_then(Value::as_str) != Some(provider) {
+        bail!("ORES receipt provider does not match the selected runtime");
+    }
+    if value.get("runtime_contract").and_then(Value::as_str) != Some(runtime_contract) {
+        bail!("ORES receipt runtime_contract does not match the selected runtime");
+    }
+    if value.get("artifact_sha256").and_then(Value::as_str) != Some(artifact_sha256) {
+        bail!("ORES receipt artifact_sha256 does not match the uploaded module");
+    }
+    if value.get("adapter_contract").and_then(Value::as_str) != Some("ores.lambda.adapter/v1") {
+        bail!("ORES receipt adapter_contract is not ores.lambda.adapter/v1");
+    }
+    if value
+        .get("deploy_mutation_performed")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        bail!("ORES receipt must prove deploy_mutation_performed=false");
+    }
+    match adapter_sha256 {
+        Some(expected) => {
+            if value.get("adapter_sha256").and_then(Value::as_str) != Some(expected) {
+                bail!("ORES receipt adapter_sha256 does not match --ores-adapter bytes");
+            }
+        }
+        None => bail!("--ores-receipt requires --ores-adapter so its digest can be verified"),
+    }
+    return Ok(());
 }
 
 async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
