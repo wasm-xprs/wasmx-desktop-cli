@@ -615,10 +615,7 @@ mod tests {
 
     #[tokio::test]
     async fn ores_receipt_binds_module_and_adapter_digests() -> Result<()> {
-        let path = env::temp_dir().join(format!(
-            "wasmx-desktop-receipt-{}.json",
-            Uuid::new_v4()
-        ));
+        let path = env::temp_dir().join(format!("wasmx-desktop-receipt-{}.json", Uuid::new_v4()));
         tokio::fs::write(
             &path,
             serde_json::to_vec(&json!({
