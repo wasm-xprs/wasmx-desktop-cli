@@ -3,9 +3,18 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, env, net::IpAddr, path::PathBuf, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    fs::OpenOptions,
+    io::Write as _,
+    net::IpAddr,
+    path::PathBuf,
+    time::Duration,
+};
 use uuid::Uuid;
 
+const EMBEDDED_FLAGS_CONFIG: &str = include_str!("../.cli-flags.toml");
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
@@ -40,6 +49,7 @@ async fn main() {
 async fn run() -> Result<()> {
     let config_path = resolve_config_path()?;
     let config_path_text = config_path
+        .path
         .to_str()
         .ok_or_else(|| anyhow!(".cli-flags.toml path is not UTF-8"))?;
     let parser = BundledFlags2Env::new();
@@ -266,29 +276,54 @@ fn validate_daemon_url(value: &str) -> Result<String> {
     return Ok(url.as_str().trim_end_matches('/').to_owned());
 }
 
-fn resolve_config_path() -> Result<PathBuf> {
+struct ResolvedConfigPath {
+    path: PathBuf,
+    cleanup: bool,
+}
+
+impl Drop for ResolvedConfigPath {
+    fn drop(&mut self) {
+        if self.cleanup {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn resolve_config_path() -> Result<ResolvedConfigPath> {
     if let Some(path) = env::var_os("WASMX_DESKTOP_FLAGS_CONFIG") {
         let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
+        let metadata = std::fs::symlink_metadata(&path)
+            .with_context(|| "WASMX_DESKTOP_FLAGS_CONFIG is not readable")?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            bail!("WASMX_DESKTOP_FLAGS_CONFIG must be a regular non-symlink file");
         }
-        bail!("WASMX_DESKTOP_FLAGS_CONFIG is not a readable file");
+        return Ok(ResolvedConfigPath {
+            path,
+            cleanup: false,
+        });
     }
 
-    let current = env::current_dir()?.join(".cli-flags.toml");
-    if current.is_file() {
-        return Ok(current);
+    let path = env::temp_dir().join(format!(
+        "wasmx-desktop-cli-flags-{}.toml",
+        Uuid::new_v4().simple()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .context("cannot materialize embedded CLI flag schema")?;
+    file.write_all(EMBEDDED_FLAGS_CONFIG.as_bytes())?;
+    file.sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     }
 
-    let executable = env::current_exe()?;
-    if let Some(parent) = executable.parent() {
-        let adjacent = parent.join(".cli-flags.toml");
-        if adjacent.is_file() {
-            return Ok(adjacent);
-        }
-    }
-
-    bail!("cannot locate .cli-flags.toml")
+    return Ok(ResolvedConfigPath {
+        path,
+        cleanup: true,
+    });
 }
 
 fn read_token() -> Result<String> {
