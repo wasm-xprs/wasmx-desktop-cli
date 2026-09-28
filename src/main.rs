@@ -470,8 +470,7 @@ mod tests {
 
     #[test]
     fn deploy_ack_binds_exact_requested_identity() -> Result<()> {
-        let expected_sha256 =
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let expected_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let good = json!({
             "tenant_id": "tenant-a",
             "deployment_id": "release-1",
@@ -480,79 +479,40 @@ mod tests {
             "compiled": true,
             "ores_adapter_verified": true
         });
-        validate_deploy_ack(
-            &good,
-            "tenant-a",
-            "release-1",
-            expected_sha256,
-            42,
-            true,
-        )?;
+        validate_deploy_ack(&good, "tenant-a", "release-1", expected_sha256, 42, true)?;
 
         for field in ["tenant_id", "deployment_id", "sha256"] {
             let mut bad = good.clone();
             bad[field] = Value::String("wrong".to_owned());
             assert!(
-                validate_deploy_ack(
-                    &bad,
-                    "tenant-a",
-                    "release-1",
-                    expected_sha256,
-                    42,
-                    true,
-                )
-                .is_err()
+                validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,)
+                    .is_err()
             );
         }
 
         let mut bad = good.clone();
         bad["module_bytes"] = Value::from(41_u64);
         assert!(
-            validate_deploy_ack(
-                &bad,
-                "tenant-a",
-                "release-1",
-                expected_sha256,
-                42,
-                true,
-            )
-            .is_err()
+            validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
         );
 
         let mut bad = good.clone();
         bad["compiled"] = Value::Bool(false);
         assert!(
-            validate_deploy_ack(
-                &bad,
-                "tenant-a",
-                "release-1",
-                expected_sha256,
-                42,
-                true,
-            )
-            .is_err()
+            validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
         );
 
         let mut bad = good;
         bad["ores_adapter_verified"] = Value::Bool(false);
         assert!(
-            validate_deploy_ack(
-                &bad,
-                "tenant-a",
-                "release-1",
-                expected_sha256,
-                42,
-                true,
-            )
-            .is_err()
+            validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
         );
         return Ok(());
     }
 
     #[test]
     fn deploy_ack_without_adapter_requires_unverified_status() -> Result<()> {
-        let expected_sha256 =
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let expected_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let value = json!({
             "tenant_id": "tenant-a",
             "deployment_id": "release-2",
@@ -561,14 +521,7 @@ mod tests {
             "compiled": true,
             "ores_adapter_verified": false
         });
-        return validate_deploy_ack(
-            &value,
-            "tenant-a",
-            "release-2",
-            expected_sha256,
-            7,
-            false,
-        );
+        return validate_deploy_ack(&value, "tenant-a", "release-2", expected_sha256, 7, false);
     }
 
     #[test]
