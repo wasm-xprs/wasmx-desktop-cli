@@ -34,6 +34,12 @@ short = "m"
 type = "string"
 help = "Path to a .wasm module."
 
+[commands.deploy.flags.ores-adapter]
+env = "WASMX_DESKTOP_ORES_ADAPTER"
+aliases = ["ores-adapter"]
+type = "string"
+help = "Optional path to an ores.lambda.adapter/v1 JSON descriptor emitted by ores-stack."
+
 [commands.invoke]
 help = "Invoke a local Wasm deployment."
 
