@@ -3,6 +3,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, env, net::IpAddr, path::PathBuf, time::Duration};
 use uuid::Uuid;
 
@@ -128,19 +129,30 @@ async fn run() -> Result<()> {
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
-                "wasm_base64": BASE64.encode(bytes),
+                "wasm_base64": BASE64.encode(&bytes),
             });
             if let Some(adapter) = ores_adapter {
                 body["ores_adapter"] = adapter;
             }
 
+            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
                 .bearer_auth(&token)
                 .json(&body)
                 .send()
                 .await?;
-            print_json_response(response).await?;
+            let value = read_json_response(response).await?;
+            let actual_sha256 = value
+                .get("sha256")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("daemon deploy response omitted sha256"))?;
+            if actual_sha256 != expected_sha256 {
+                bail!(
+                    "daemon deploy digest mismatch: expected {expected_sha256}, got {actual_sha256}"
+                );
+            }
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         "invoke" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
@@ -220,7 +232,7 @@ fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
     return Ok(value);
 }
 
-async fn print_json_response(mut response: reqwest::Response) -> Result<()> {
+async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
     let status = response.status();
     if response
         .content_length()
@@ -242,8 +254,13 @@ async fn print_json_response(mut response: reqwest::Response) -> Result<()> {
         bail!("daemon returned {status}: {text}");
     }
     let value: Value = serde_json::from_slice(&body).context("daemon response was not JSON")?;
+    Ok(value)
+}
+
+async fn print_json_response(response: reqwest::Response) -> Result<()> {
+    let value = read_json_response(response).await?;
     println!("{}", serde_json::to_string_pretty(&value)?);
-    return Ok(());
+    Ok(())
 }
 
 fn required(value: Option<String>, flag: &str) -> Result<String> {
@@ -375,6 +392,15 @@ mod tests {
         assert!(validated_id(Some("../escape".to_owned()), "--tenant").is_err());
         assert!(validated_id(Some("a/b".to_owned()), "--tenant").is_err());
         return Ok(());
+    }
+
+    #[test]
+    fn sha256_is_stable_for_uploaded_module_bytes() {
+        let digest = format!("{:x}", Sha256::digest(b"wasmx"));
+        assert_eq!(
+            digest,
+            "1d47fb365312446e2c62ef0e85f757af3c123f88cb1ca846c36bf7ebae57ee9d"
+        );
     }
 
     #[test]
