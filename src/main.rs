@@ -102,8 +102,7 @@ async fn run() -> Result<()> {
         }
         "inspect" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let response = client
                 .get(format!(
                     "{base_url}/v1/deployments/{tenant_id}/{deployment_id}"
@@ -115,8 +114,7 @@ async fn run() -> Result<()> {
         }
         "deploy" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let module_path = required(config.WASMX_DESKTOP_MODULE, "--module")?;
             let bytes = tokio::fs::read(&module_path)
                 .await
@@ -146,8 +144,7 @@ async fn run() -> Result<()> {
         }
         "invoke" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let payload_json = config.WASMX_DESKTOP_PAYLOAD.unwrap_or_else(|| json!({}));
             let fuel = config
                 .WASMX_DESKTOP_FUEL
@@ -176,8 +173,7 @@ async fn run() -> Result<()> {
         }
         "delete" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let response = client
                 .delete(format!(
                     "{base_url}/v1/deployments/{tenant_id}/{deployment_id}"
