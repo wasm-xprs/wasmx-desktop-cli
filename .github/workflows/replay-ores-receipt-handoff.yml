@@ -40,7 +40,7 @@ jobs:
           text = text.replace(old, new, 1)
 
           old_block = '''            let ores_adapter =\n                read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;\n            let adapter_supplied = ores_adapter.is_some();\n            let mut body = json!({\n                "tenant_id": tenant_id,\n                "deployment_id": deployment_id,\n                "wasm_base64": BASE64.encode(&bytes),\n            });\n            if let Some(adapter) = ores_adapter {\n                body["ores_adapter"] = adapter;\n            }\n'''
-          new_block = '''            let ores_adapter_path = config.WASMX_DESKTOP_ORES_ADAPTER.as_deref();\n            let ores_adapter = read_optional_ores_adapter(ores_adapter_path).await?;\n            let adapter_supplied = ores_adapter.is_some();\n            let ores_evidence = read_optional_ores_evidence(\n                ores_adapter_path,\n                config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),\n                &bytes,\n            )\n            .await?;\n            let mut body = json!({\n                "tenant_id": tenant_id,\n                "deployment_id": deployment_id,\n                "wasm_base64": BASE64.encode(&bytes),\n            });\n            if let Some(adapter) = ores_adapter {\n                body["ores_adapter"] = adapter;\n            }\n            if let Some(evidence) = ores_evidence {\n                body["ores_adapter_raw_base64"] =\n                    Value::String(BASE64.encode(&evidence.adapter_bytes));\n                body["ores_receipt_raw_base64"] =\n                    Value::String(BASE64.encode(&evidence.receipt_bytes));\n            }\n'''
+          new_block = '''            let ores_adapter_path = config.WASMX_DESKTOP_ORES_ADAPTER.as_deref();\n            let ores_adapter = read_optional_ores_adapter(ores_adapter_path).await?;\n            let adapter_supplied = ores_adapter.is_some();\n            let ores_evidence = read_optional_ores_evidence(\n                ores_adapter_path,\n                config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),\n                &bytes,\n            )\n            .await?;\n            let receipt_supplied = ores_evidence.is_some();\n            let mut body = json!({\n                "tenant_id": tenant_id,\n                "deployment_id": deployment_id,\n                "wasm_base64": BASE64.encode(&bytes),\n            });\n            if let Some(adapter) = ores_adapter {\n                body["ores_adapter"] = adapter;\n            }\n            if let Some(evidence) = ores_evidence {\n                body["ores_adapter_raw_base64"] =\n                    Value::String(BASE64.encode(&evidence.adapter_bytes));\n                body["ores_receipt_raw_base64"] =\n                    Value::String(BASE64.encode(&evidence.receipt_bytes));\n            }\n'''
           if text.count(old_block) != 1:
               raise SystemExit('current deploy block drifted')
           text = text.replace(old_block, new_block, 1)
@@ -64,18 +64,22 @@ jobs:
           evidence = evidence.replace('        adapter_value,\n        adapter_bytes,', '        adapter_bytes,', 1)
           evidence = evidence.replace(
               '    fn receipt_bytes(adapter: &[u8], module: &[u8]) -> Vec<u8> {\n        return serde_json::to_vec(',
-              '    fn receipt_bytes(adapter: &[u8], module: &[u8]) -> Result<Vec<u8>> {\n        return Ok(serde_json::to_vec(',
+              '    fn receipt_bytes(adapter: &[u8], module: &[u8]) -> Result<Vec<u8>> {\n        let bytes = serde_json::to_vec(',
               1,
           )
           evidence = evidence.replace(
               '        }))\n        .expect("receipt JSON");\n',
-              '        })?)\n    }\n',
+              '        }))?;\n        return Ok(bytes);\n',
               1,
           )
           evidence = evidence.replace('        let receipt = receipt_bytes(&adapter, module);\n', '        let receipt = receipt_bytes(&adapter, module)?;\n', 1)
           evidence = evidence.replace('    fn receipt_rejects_module_or_raw_adapter_drift() {\n', '    fn receipt_rejects_module_or_raw_adapter_drift() -> Result<()> {\n', 1)
           evidence = evidence.replace('        let receipt = receipt_bytes(&adapter, b"wasm-module");\n', '        let receipt = receipt_bytes(&adapter, b"wasm-module")?;\n', 1)
-          evidence = evidence.replace('            .is_err()\n        );\n    }\n}\n', '            .is_err()\n        );\n        return Ok(());\n    }\n}\n', 1)
+          evidence = evidence.replace(
+              '        );\n    }\n}\n',
+              '        );\n        return Ok(());\n    }\n}\n',
+              1,
+          )
           evidence_path.write_text(evidence)
           PY
           cargo fmt --all
