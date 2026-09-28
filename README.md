@@ -5,6 +5,7 @@ Rust CLI for the local wasm-xprs desktop control plane.
 Commands:
 
 - status
+- list
 - deploy --tenant TENANT --deployment GENERATION --module ./function.wasm
 - invoke --tenant TENANT --deployment GENERATION --payload JSON
 - delete --tenant TENANT --deployment GENERATION
@@ -14,6 +15,8 @@ The CLI talks only to wasmx-desktop-daemon over loopback by default and reads th
 Examples:
 
     cargo run -- status
+
+    cargo run -- list
 
     cargo run -- deploy \
       --tenant local-dev \
