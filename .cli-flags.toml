@@ -61,6 +61,12 @@ aliases = ["ores-adapter"]
 type = "string"
 help = "Optional path to an ores.lambda.adapter/v1 JSON descriptor emitted by ores-stack."
 
+[commands.deploy.flags.ores-receipt]
+env = "WASMX_DESKTOP_ORES_RECEIPT"
+aliases = ["ores-receipt"]
+type = "string"
+help = "Optional path to the matching ores.lambda.wasm-artifact.receipt/v1 build receipt. Requires --ores-adapter."
+
 [commands.invoke]
 help = "Invoke a local Wasm deployment."
 

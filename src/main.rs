@@ -1,3 +1,5 @@
+mod ores_evidence;
+
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use flags2env::BundledFlags2Env;
@@ -21,6 +23,7 @@ struct CliConfig {
     WASMX_DESKTOP_DEPLOYMENT_ID: Option<String>,
     WASMX_DESKTOP_MODULE: Option<String>,
     WASMX_DESKTOP_ORES_ADAPTER: Option<String>,
+    WASMX_DESKTOP_ORES_RECEIPT: Option<String>,
     WASMX_DESKTOP_PAYLOAD: Option<Value>,
     WASMX_DESKTOP_FUEL: Option<i64>,
     WASMX_DESKTOP_INVOCATION_ID: Option<String>,
@@ -147,9 +150,15 @@ async fn run() -> Result<()> {
                 bail!("module must be between 1 and {MAX_MODULE_BYTES} bytes");
             }
 
-            let ores_adapter =
-                read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
+            let ores_adapter_path = config.WASMX_DESKTOP_ORES_ADAPTER.as_deref();
+            let ores_adapter = read_optional_ores_adapter(ores_adapter_path).await?;
             let adapter_supplied = ores_adapter.is_some();
+            let ores_evidence = read_optional_ores_evidence(
+                ores_adapter_path,
+                config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),
+                &bytes,
+            )
+            .await?;
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -157,6 +166,12 @@ async fn run() -> Result<()> {
             });
             if let Some(adapter) = ores_adapter {
                 body["ores_adapter"] = adapter;
+            }
+            if let Some(evidence) = ores_evidence {
+                body["ores_adapter_raw_base64"] =
+                    Value::String(BASE64.encode(&evidence.adapter_bytes));
+                body["ores_receipt_raw_base64"] =
+                    Value::String(BASE64.encode(&evidence.receipt_bytes));
             }
 
             let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -246,6 +261,39 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
         .await
         .with_context(|| format!("cannot read ORES adapter {path}"))?;
     return parse_ores_adapter_bytes(&bytes).map(Some);
+}
+
+async fn read_optional_ores_evidence(
+    adapter_path: Option<&str>,
+    receipt_path: Option<&str>,
+    module_bytes: &[u8],
+) -> Result<Option<ores_evidence::CheckedOresEvidence>> {
+    let Some(receipt_path) = receipt_path else {
+        return Ok(None);
+    };
+    let adapter_path = adapter_path
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow!("--ores-receipt requires --ores-adapter"))?;
+    if receipt_path.trim().is_empty() {
+        bail!("--ores-receipt must name a readable JSON file");
+    }
+    let adapter_bytes = tokio::fs::read(adapter_path)
+        .await
+        .with_context(|| format!("cannot read ORES adapter {adapter_path}"))?;
+    if adapter_bytes.is_empty() || adapter_bytes.len() > MAX_ORES_ADAPTER_BYTES {
+        bail!("ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes");
+    }
+    let receipt_bytes = tokio::fs::read(receipt_path)
+        .await
+        .with_context(|| format!("cannot read ORES receipt {receipt_path}"))?;
+    let evidence = ores_evidence::validate(
+        adapter_bytes,
+        receipt_bytes,
+        module_bytes,
+        "wasm_xprs",
+        "wasm32-unknown-unknown",
+    )?;
+    return Ok(Some(evidence));
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
