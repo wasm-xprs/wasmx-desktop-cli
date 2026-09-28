@@ -5,6 +5,7 @@ Rust CLI for the local wasm-xprs desktop control plane.
 Commands:
 
 - `status`
+- `list`
 - `deploy --tenant TENANT --deployment GENERATION --module ./function.wasm [--ores-adapter ./adapter.json]`
 - `invoke --tenant TENANT --deployment GENERATION --payload JSON`
 - `delete --tenant TENANT --deployment GENERATION`
@@ -15,6 +16,8 @@ Examples:
 
 ```sh
 cargo run -- status
+
+cargo run -- list
 
 cargo run -- deploy \
   --tenant local-dev \
@@ -35,4 +38,4 @@ cargo run -- invoke \
 
 `--ores-adapter` accepts an `ores.lambda.adapter/v1` JSON descriptor emitted by `ores-stack`. The CLI only checks that the file is a bounded JSON object and transmits it unchanged; the daemon remains the semantic authority and rejects descriptors that do not bind to `wasm_xprs`, `wasm32-unknown-unknown`, `wasmx-v1`, `wasmtime_store`, and `wasi_enabled=false`.
 
-Use `--url` to override the daemon URL and `--timeout` to bound invocation wall time.
+Use `--url` to override the daemon URL and `--timeout` to bound invocation wall time. Plain HTTP daemon URLs are accepted only for loopback (`127.0.0.1`, `::1`, or `localhost`); remote daemon URLs must use HTTPS so the bearer token is not transmitted in cleartext.
