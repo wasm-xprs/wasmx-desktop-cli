@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
+const MAX_ORES_RECEIPT_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FUEL: u64 = 500_000_000;
 
@@ -21,6 +22,7 @@ struct CliConfig {
     WASMX_DESKTOP_DEPLOYMENT_ID: Option<String>,
     WASMX_DESKTOP_MODULE: Option<String>,
     WASMX_DESKTOP_ORES_ADAPTER: Option<String>,
+    WASMX_DESKTOP_ORES_RECEIPT: Option<String>,
     WASMX_DESKTOP_PAYLOAD: Option<Value>,
     WASMX_DESKTOP_FUEL: Option<i64>,
     WASMX_DESKTOP_INVOCATION_ID: Option<String>,
@@ -150,16 +152,23 @@ async fn run() -> Result<()> {
             let ores_adapter =
                 read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let adapter_supplied = ores_adapter.is_some();
+            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
+            validate_optional_ores_receipt(
+                config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),
+                "wasm_xprs",
+                "wasm-xprs.lambda-runtime/v1",
+                &expected_sha256,
+                ores_adapter.as_ref().map(|adapter| adapter.sha256.as_str()),
+            )
+            .await?;
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "wasm_base64": BASE64.encode(&bytes),
             });
-            if let Some(adapter) = ores_adapter {
-                body["ores_adapter"] = adapter;
+            if let Some(adapter) = ores_adapter.as_ref() {
+                body["ores_adapter"] = adapter.value.clone();
             }
-
-            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
                 .bearer_auth(&token)
@@ -175,7 +184,22 @@ async fn run() -> Result<()> {
                 bytes.len(),
                 adapter_supplied,
             )?;
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            if config.WASMX_DESKTOP_ORES_RECEIPT.is_some() {
+                let ack = json!({
+                    "schema_version": "ores.lambda.runtime-deploy-ack/v1",
+                    "provider": "wasm_xprs",
+                    "tenant_id": tenant_id,
+                    "deployment_id": deployment_id,
+                    "artifact_sha256": expected_sha256,
+                    "artifact_bytes": bytes.len(),
+                    "adapter_verified": adapter_supplied,
+                    "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+                    "compiled": true
+                });
+                println!("{}", serde_json::to_string_pretty(&ack)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
         }
         "invoke" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
@@ -235,7 +259,13 @@ async fn run() -> Result<()> {
     return Ok(());
 }
 
-async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>> {
+#[derive(Debug)]
+struct OresAdapterInput {
+    value: Value,
+    sha256: String,
+}
+
+async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<OresAdapterInput>> {
     let Some(path) = path else {
         return Ok(None);
     };
@@ -245,7 +275,11 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
     let bytes = tokio::fs::read(path)
         .await
         .with_context(|| format!("cannot read ORES adapter {path}"))?;
-    return parse_ores_adapter_bytes(&bytes).map(Some);
+    let value = parse_ores_adapter_bytes(&bytes)?;
+    return Ok(Some(OresAdapterInput {
+        value,
+        sha256: format!("{:x}", Sha256::digest(&bytes)),
+    }));
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
@@ -257,6 +291,61 @@ fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
         bail!("ORES adapter must be a JSON object");
     }
     return Ok(value);
+}
+
+async fn validate_optional_ores_receipt(
+    path: Option<&str>,
+    provider: &str,
+    runtime_contract: &str,
+    artifact_sha256: &str,
+    adapter_sha256: Option<&str>,
+) -> Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    if path.trim().is_empty() {
+        bail!("--ores-receipt must name a readable JSON file");
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("cannot read ORES receipt {path}"))?;
+    if bytes.is_empty() || bytes.len() > MAX_ORES_RECEIPT_BYTES {
+        bail!("ORES receipt must be between 1 and {MAX_ORES_RECEIPT_BYTES} bytes");
+    }
+    let value: Value = serde_json::from_slice(&bytes).context("ORES receipt is not valid JSON")?;
+    if value.get("schema_version").and_then(Value::as_str)
+        != Some("ores.lambda.wasm-artifact.receipt/v1")
+    {
+        bail!("ORES receipt schema_version is not ores.lambda.wasm-artifact.receipt/v1");
+    }
+    if value.get("provider").and_then(Value::as_str) != Some(provider) {
+        bail!("ORES receipt provider does not match the selected runtime");
+    }
+    if value.get("runtime_contract").and_then(Value::as_str) != Some(runtime_contract) {
+        bail!("ORES receipt runtime_contract does not match the selected runtime");
+    }
+    if value.get("artifact_sha256").and_then(Value::as_str) != Some(artifact_sha256) {
+        bail!("ORES receipt artifact_sha256 does not match the uploaded module");
+    }
+    if value.get("adapter_contract").and_then(Value::as_str) != Some("ores.lambda.adapter/v1") {
+        bail!("ORES receipt adapter_contract is not ores.lambda.adapter/v1");
+    }
+    if value
+        .get("deploy_mutation_performed")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        bail!("ORES receipt must prove deploy_mutation_performed=false");
+    }
+    match adapter_sha256 {
+        Some(expected) => {
+            if value.get("adapter_sha256").and_then(Value::as_str) != Some(expected) {
+                bail!("ORES receipt adapter_sha256 does not match --ores-adapter bytes");
+            }
+        }
+        None => bail!("--ores-receipt requires --ores-adapter so its digest can be verified"),
+    }
+    return Ok(());
 }
 
 async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
@@ -511,6 +600,24 @@ mod tests {
     }
 
     #[test]
+    fn ores_mode_ack_has_normalized_contract_shape() -> Result<()> {
+        let ack = json!({
+            "schema_version": "ores.lambda.runtime-deploy-ack/v1",
+            "provider": "wasm_xprs",
+            "tenant_id": "tenant-a",
+            "deployment_id": "release-1",
+            "artifact_sha256": "a".repeat(64),
+            "artifact_bytes": 42,
+            "adapter_verified": true,
+            "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+            "compiled": true
+        });
+        assert_eq!(ack["schema_version"], "ores.lambda.runtime-deploy-ack/v1");
+        assert_eq!(ack["compiled"], true);
+        return Ok(());
+    }
+
+    #[test]
     fn deploy_ack_without_adapter_requires_unverified_status() -> Result<()> {
         let expected_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let value = json!({
@@ -569,5 +676,44 @@ mod tests {
         assert!(parse_ores_adapter_bytes(b"[]").is_err());
         assert!(parse_ores_adapter_bytes(b"").is_err());
         return Ok(());
+    }
+
+    #[tokio::test]
+    async fn ores_receipt_binds_module_and_adapter_digests() -> Result<()> {
+        let path = env::temp_dir().join(format!("wasmx-desktop-receipt-{}.json", Uuid::new_v4()));
+        tokio::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": "ores.lambda.wasm-artifact.receipt/v1",
+                "provider": "wasm_xprs",
+                "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+                "adapter_contract": "ores.lambda.adapter/v1",
+                "artifact_sha256": "a".repeat(64),
+                "adapter_sha256": "b".repeat(64),
+                "deploy_mutation_performed": false
+            }))?,
+        )
+        .await?;
+        validate_optional_ores_receipt(
+            path.to_str(),
+            "wasm_xprs",
+            "wasm-xprs.lambda-runtime/v1",
+            &"a".repeat(64),
+            Some(&"b".repeat(64)),
+        )
+        .await?;
+        assert!(
+            validate_optional_ores_receipt(
+                path.to_str(),
+                "wasm_xprs",
+                "wasm-xprs.lambda-runtime/v1",
+                &"c".repeat(64),
+                Some(&"b".repeat(64)),
+            )
+            .await
+            .is_err()
+        );
+        let _ = tokio::fs::remove_file(&path).await;
+        Ok(())
     }
 }
