@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
+const MAX_ORES_RECEIPT_BYTES: usize = 1024 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FUEL: u64 = 500_000_000;
 
@@ -21,6 +22,7 @@ struct CliConfig {
     WASMX_DESKTOP_DEPLOYMENT_ID: Option<String>,
     WASMX_DESKTOP_MODULE: Option<String>,
     WASMX_DESKTOP_ORES_ADAPTER: Option<String>,
+    WASMX_DESKTOP_ORES_RECEIPT: Option<String>,
     WASMX_DESKTOP_PAYLOAD: Option<Value>,
     WASMX_DESKTOP_FUEL: Option<i64>,
     WASMX_DESKTOP_INVOCATION_ID: Option<String>,
@@ -150,16 +152,23 @@ async fn run() -> Result<()> {
             let ores_adapter =
                 read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let adapter_supplied = ores_adapter.is_some();
+            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
+            validate_optional_ores_receipt(
+                config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),
+                "wasm_xprs",
+                "wasm-xprs.lambda-runtime/v1",
+                &expected_sha256,
+                ores_adapter.as_ref().map(|adapter| adapter.sha256.as_str()),
+            )
+            .await?;
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "wasm_base64": BASE64.encode(&bytes),
             });
-            if let Some(adapter) = ores_adapter {
-                body["ores_adapter"] = adapter;
+            if let Some(adapter) = ores_adapter.as_ref() {
+                body["ores_adapter"] = adapter.value.clone();
             }
-
-            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
                 .bearer_auth(&token)
@@ -569,5 +578,47 @@ mod tests {
         assert!(parse_ores_adapter_bytes(b"[]").is_err());
         assert!(parse_ores_adapter_bytes(b"").is_err());
         return Ok(());
+    }
+
+    #[tokio::test]
+    async fn ores_receipt_binds_module_and_adapter_digests() -> Result<()> {
+        let path = env::temp_dir().join(format!(
+            "wasmx-desktop-receipt-{}.json",
+            Uuid::new_v4()
+        ));
+        tokio::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema_version": "ores.lambda.wasm-artifact.receipt/v1",
+                "provider": "wasm_xprs",
+                "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+                "adapter_contract": "ores.lambda.adapter/v1",
+                "artifact_sha256": "a".repeat(64),
+                "adapter_sha256": "b".repeat(64),
+                "deploy_mutation_performed": false
+            }))?,
+        )
+        .await?;
+        validate_optional_ores_receipt(
+            path.to_str(),
+            "wasm_xprs",
+            "wasm-xprs.lambda-runtime/v1",
+            &"a".repeat(64),
+            Some(&"b".repeat(64)),
+        )
+        .await?;
+        assert!(
+            validate_optional_ores_receipt(
+                path.to_str(),
+                "wasm_xprs",
+                "wasm-xprs.lambda-runtime/v1",
+                &"c".repeat(64),
+                Some(&"b".repeat(64)),
+            )
+            .await
+            .is_err()
+        );
+        let _ = tokio::fs::remove_file(&path).await;
+        Ok(())
     }
 }
