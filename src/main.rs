@@ -95,10 +95,7 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "doctor" => {
-            let ready = client
-                .get(format!("{base_url}/readyz"))
-                .send()
-                .await?;
+            let ready = client.get(format!("{base_url}/readyz")).send().await?;
             if !ready.status().is_success() {
                 bail!("daemon readiness check failed with {}", ready.status());
             }
