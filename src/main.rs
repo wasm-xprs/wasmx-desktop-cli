@@ -159,7 +159,7 @@ async fn run() -> Result<()> {
                 body["ores_adapter"] = adapter;
             }
 
-            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
+            let expected_sha256 = hex_lower(&Sha256::digest(&bytes));
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
                 .bearer_auth(&token)
@@ -344,6 +344,16 @@ fn validate_status_contract(value: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    out
 }
 
 fn required(value: Option<String>, flag: &str) -> Result<String> {
@@ -553,7 +563,7 @@ mod tests {
 
     #[test]
     fn sha256_is_stable_for_uploaded_module_bytes() {
-        let digest = format!("{:x}", Sha256::digest(b"wasmx"));
+        let digest = hex_lower(&Sha256::digest(b"wasmx"));
         assert_eq!(
             digest,
             "1d47fb365312446e2c62ef0e85f757af3c123f88cb1ca846c36bf7ebae57ee9d"
