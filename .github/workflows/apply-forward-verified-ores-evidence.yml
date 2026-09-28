@@ -1,0 +1,36 @@
+name: apply-forward-verified-ores-evidence
+
+on:
+  push:
+    branches:
+      - fix/forward-verified-ores-evidence-20260928
+    paths:
+      - tools/patch_forward_ores_evidence.py
+      - .github/workflows/apply-forward-verified-ores-evidence.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/forward-verified-ores-evidence-20260928
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply, format, verify, and remove helper
+        run: |
+          python3 tools/patch_forward_ores_evidence.py
+          cargo fmt --all
+          git diff --check
+          git rm tools/patch_forward_ores_evidence.py .github/workflows/apply-forward-verified-ores-evidence.yml
+          git config user.name ORESoftware
+          git config user.email alex@oresoftware.com
+          git add src/main.rs
+          git commit -m 'fix: forward exact ORES build evidence to daemon'
+          git push origin HEAD:fix/forward-verified-ores-evidence-20260928
