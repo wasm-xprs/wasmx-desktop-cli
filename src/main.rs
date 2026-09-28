@@ -394,7 +394,6 @@ mod tests {
         return Ok(());
     }
 
-
     #[test]
     fn sha256_is_stable_for_uploaded_module_bytes() {
         let digest = format!("{:x}", Sha256::digest(b"wasmx"));
