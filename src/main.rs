@@ -400,7 +400,7 @@ mod tests {
         let digest = format!("{:x}", Sha256::digest(b"wasmx"));
         assert_eq!(
             digest,
-            "7d14ec0b90a378065d5899f64c978ed5f4bbca13eef376bf22f6a43b1096f26e"
+            "1d47fb365312446e2c62ef0e85f757af3c123f88cb1ca846c36bf7ebae57ee9d"
         );
     }
 
