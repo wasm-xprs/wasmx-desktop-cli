@@ -5,6 +5,7 @@ Rust CLI for the local wasm-xprs desktop control plane.
 Commands:
 
 - `status`
+- `doctor`
 - `list`
 - `deploy --tenant TENANT --deployment GENERATION --module ./function.wasm [--ores-adapter ./adapter.json]`
 - `invoke --tenant TENANT --deployment GENERATION --payload JSON`
@@ -16,6 +17,8 @@ Examples:
 
 ```sh
 cargo run -- status
+
+cargo run -- doctor
 
 cargo run -- list
 - inspect --tenant TENANT --deployment GENERATION
@@ -44,3 +47,9 @@ Use `--url` to override the daemon URL and `--timeout` to bound invocation wall 
 ## Transport hardening
 
 The CLI refuses redirects for authenticated daemon requests, rejects plaintext HTTP for non-loopback hosts, validates deployment identifiers before constructing URL paths, bounds daemon responses, and on Unix refuses token files readable by group or other users.
+
+## Invocation correlation
+
+`invoke` generates a UUID by default. Supply `--invocation-id` when a caller needs to preserve a stable correlation id across retries or propagate an upstream request id. IDs use the same restricted ASCII syntax as tenant/deployment identifiers.
+
+`doctor` checks both unauthenticated readiness and authenticated status, then verifies that the daemon still advertises the expected raw-Wasmtime contract: `wasmx-v1`, `wasm32-unknown-unknown`, fresh Store per invocation, and WASI disabled.

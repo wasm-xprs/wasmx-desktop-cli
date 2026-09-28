@@ -23,6 +23,7 @@ struct CliConfig {
     WASMX_DESKTOP_ORES_ADAPTER: Option<String>,
     WASMX_DESKTOP_PAYLOAD: Option<Value>,
     WASMX_DESKTOP_FUEL: Option<i64>,
+    WASMX_DESKTOP_INVOCATION_ID: Option<String>,
     FLAGS2ENV_COMMAND: Option<String>,
 }
 
@@ -92,6 +93,28 @@ async fn run() -> Result<()> {
                 .send()
                 .await?;
             print_json_response(response).await?;
+        }
+        "doctor" => {
+            let ready = client.get(format!("{base_url}/readyz")).send().await?;
+            if !ready.status().is_success() {
+                bail!("daemon readiness check failed with {}", ready.status());
+            }
+
+            let response = client
+                .get(format!("{base_url}/v1/status"))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            let status = read_json_response(response).await?;
+            validate_status_contract(&status)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "ready": true,
+                    "runtime_contract_verified": true,
+                    "status": status,
+                }))?
+            );
         }
         "list" => {
             let response = client
@@ -167,8 +190,12 @@ async fn run() -> Result<()> {
                         .ok_or_else(|| anyhow!("--fuel must be between 1 and {MAX_FUEL}"));
                 })
                 .transpose()?;
+            let invocation_id = match config.WASMX_DESKTOP_INVOCATION_ID {
+                Some(value) => validated_id(Some(value), "--invocation-id")?,
+                None => Uuid::new_v4().to_string(),
+            };
             let body = json!({
-                "invocation_id": Uuid::new_v4().to_string(),
+                "invocation_id": invocation_id,
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "payload_json": payload_json,
@@ -201,7 +228,7 @@ async fn run() -> Result<()> {
             println!("deleted {tenant_id}/{deployment_id}");
         }
         _ => {
-            bail!("command required: status, list, inspect, deploy, invoke or delete");
+            bail!("command required: status, doctor, list, inspect, deploy, invoke or delete");
         }
     }
 
@@ -260,6 +287,29 @@ async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
 async fn print_json_response(response: reqwest::Response) -> Result<()> {
     let value = read_json_response(response).await?;
     println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn validate_status_contract(value: &Value) -> Result<()> {
+    let expected = [
+        ("runtime", Value::String("wasmtime".to_owned())),
+        (
+            "isolation",
+            Value::String("fresh_store_per_invocation".to_owned()),
+        ),
+        ("guest_abi", Value::String("wasmx-v1".to_owned())),
+        (
+            "target_triple",
+            Value::String("wasm32-unknown-unknown".to_owned()),
+        ),
+        ("wasi_enabled", Value::Bool(false)),
+        ("store_per_invocation", Value::Bool(true)),
+    ];
+    for (field, expected_value) in expected {
+        if value.get(field) != Some(&expected_value) {
+            bail!("daemon runtime contract mismatch for field {field}");
+        }
+    }
     Ok(())
 }
 
@@ -366,6 +416,24 @@ fn read_token() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_rejects_wrong_runtime_contract() -> Result<()> {
+        let good = json!({
+            "runtime": "wasmtime",
+            "isolation": "fresh_store_per_invocation",
+            "guest_abi": "wasmx-v1",
+            "target_triple": "wasm32-unknown-unknown",
+            "wasi_enabled": false,
+            "store_per_invocation": true
+        });
+        validate_status_contract(&good)?;
+
+        let mut bad = good;
+        bad["wasi_enabled"] = Value::Bool(true);
+        assert!(validate_status_contract(&bad).is_err());
+        Ok(())
+    }
 
     #[test]
     fn daemon_url_rejects_remote_plaintext() -> Result<()> {

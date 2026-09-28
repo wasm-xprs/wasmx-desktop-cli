@@ -12,6 +12,9 @@ ignore = ["WASMX_DESKTOP_TOKEN"]
 [commands.status]
 help = "Show local wasm-xprs Wasmtime daemon status."
 
+[commands.doctor]
+help = "Verify daemon readiness, authentication, and the expected wasm-xprs runtime contract."
+
 [commands.list]
 help = "List persisted local Wasm deployments."
 
@@ -86,6 +89,12 @@ env = "WASMX_DESKTOP_FUEL"
 aliases = ["fuel"]
 type = "integer"
 help = "Optional Wasmtime fuel budget."
+
+[commands.invoke.flags.invocation-id]
+env = "WASMX_DESKTOP_INVOCATION_ID"
+aliases = ["invocation-id"]
+type = "string"
+help = "Optional caller-supplied invocation id for tracing and retry correlation."
 
 [commands.delete]
 help = "Delete a local deployment artifact."
