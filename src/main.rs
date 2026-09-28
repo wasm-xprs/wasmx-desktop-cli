@@ -153,7 +153,7 @@ async fn run() -> Result<()> {
                 read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let adapter_supplied = ores_adapter.is_some();
             let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
-            validate_optional_ores_receipt(
+            let receipt_bytes = validate_optional_ores_receipt(
                 config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),
                 "wasm_xprs",
                 "wasm-xprs.lambda-runtime/v1",
@@ -161,6 +161,7 @@ async fn run() -> Result<()> {
                 ores_adapter.as_ref().map(|adapter| adapter.sha256.as_str()),
             )
             .await?;
+            let receipt_supplied = receipt_bytes.is_some();
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -168,6 +169,13 @@ async fn run() -> Result<()> {
             });
             if let Some(adapter) = ores_adapter.as_ref() {
                 body["ores_adapter"] = adapter.value.clone();
+            }
+            if let Some(receipt_bytes) = receipt_bytes.as_ref() {
+                let adapter = ores_adapter
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("--ores-receipt requires --ores-adapter"))?;
+                body["ores_adapter_raw_base64"] = Value::String(BASE64.encode(&adapter.bytes));
+                body["ores_receipt_raw_base64"] = Value::String(BASE64.encode(receipt_bytes));
             }
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
@@ -184,22 +192,8 @@ async fn run() -> Result<()> {
                 bytes.len(),
                 adapter_supplied,
             )?;
-            if config.WASMX_DESKTOP_ORES_RECEIPT.is_some() {
-                let ack = json!({
-                    "schema_version": "ores.lambda.runtime-deploy-ack/v1",
-                    "provider": "wasm_xprs",
-                    "tenant_id": tenant_id,
-                    "deployment_id": deployment_id,
-                    "artifact_sha256": expected_sha256,
-                    "artifact_bytes": bytes.len(),
-                    "adapter_verified": adapter_supplied,
-                    "runtime_contract": "wasm-xprs.lambda-runtime/v1",
-                    "compiled": true
-                });
-                println!("{}", serde_json::to_string_pretty(&ack)?);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&value)?);
-            }
+            validate_receipt_ack(&value, receipt_supplied)?;
+            println!("{}", serde_json::to_string_pretty(&value)?);
         }
         "invoke" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
@@ -262,6 +256,7 @@ async fn run() -> Result<()> {
 #[derive(Debug)]
 struct OresAdapterInput {
     value: Value,
+    bytes: Vec<u8>,
     sha256: String,
 }
 
@@ -279,6 +274,7 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<OresAda
     return Ok(Some(OresAdapterInput {
         value,
         sha256: format!("{:x}", Sha256::digest(&bytes)),
+        bytes,
     }));
 }
 
@@ -299,9 +295,9 @@ async fn validate_optional_ores_receipt(
     runtime_contract: &str,
     artifact_sha256: &str,
     adapter_sha256: Option<&str>,
-) -> Result<()> {
+) -> Result<Option<Vec<u8>>> {
     let Some(path) = path else {
-        return Ok(());
+        return Ok(None);
     };
     if path.trim().is_empty() {
         bail!("--ores-receipt must name a readable JSON file");
@@ -345,7 +341,7 @@ async fn validate_optional_ores_receipt(
         }
         None => bail!("--ores-receipt requires --ores-adapter so its digest can be verified"),
     }
-    return Ok(());
+    return Ok(Some(bytes));
 }
 
 async fn read_json_response(mut response: reqwest::Response) -> Result<Value> {
@@ -407,6 +403,15 @@ fn validate_deploy_ack(
     if value.get("ores_adapter_verified").and_then(Value::as_bool) != Some(adapter_supplied) {
         bail!(
             "daemon deploy response adapter verification did not match whether an ORES adapter was supplied"
+        );
+    }
+    return Ok(());
+}
+
+fn validate_receipt_ack(value: &Value, receipt_supplied: bool) -> Result<()> {
+    if value.get("ores_receipt_verified").and_then(Value::as_bool) != Some(receipt_supplied) {
+        bail!(
+            "daemon deploy response receipt verification did not match whether ORES receipt evidence was supplied"
         );
     }
     return Ok(());
@@ -600,20 +605,11 @@ mod tests {
     }
 
     #[test]
-    fn ores_mode_ack_has_normalized_contract_shape() -> Result<()> {
-        let ack = json!({
-            "schema_version": "ores.lambda.runtime-deploy-ack/v1",
-            "provider": "wasm_xprs",
-            "tenant_id": "tenant-a",
-            "deployment_id": "release-1",
-            "artifact_sha256": "a".repeat(64),
-            "artifact_bytes": 42,
-            "adapter_verified": true,
-            "runtime_contract": "wasm-xprs.lambda-runtime/v1",
-            "compiled": true
-        });
-        assert_eq!(ack["schema_version"], "ores.lambda.runtime-deploy-ack/v1");
-        assert_eq!(ack["compiled"], true);
+    fn receipt_ack_requires_exact_daemon_verification_state() -> Result<()> {
+        validate_receipt_ack(&json!({"ores_receipt_verified": true}), true)?;
+        validate_receipt_ack(&json!({"ores_receipt_verified": false}), false)?;
+        assert!(validate_receipt_ack(&json!({"ores_receipt_verified": false}), true).is_err());
+        assert!(validate_receipt_ack(&json!({}), false).is_err());
         return Ok(());
     }
 
