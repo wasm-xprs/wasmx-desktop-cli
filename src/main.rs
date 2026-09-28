@@ -61,10 +61,7 @@ async fn run() -> Result<()> {
         bail!("invalid command-line values: {}", parsed.errors.join("; "));
     }
     if !parsed.extras.is_empty() {
-        bail!(
-            "unexpected positional arguments: {}",
-            parsed.extras.len()
-        );
+        bail!("unexpected positional arguments: {}", parsed.extras.len());
     }
 
     let mut raw = env::vars().collect::<HashMap<_, _>>();
@@ -82,9 +79,7 @@ async fn run() -> Result<()> {
     let token = read_token()?;
     let base_url = validate_daemon_url(&config.WASMX_DESKTOP_DAEMON_URL)?;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(
-            timeout_ms.saturating_add(5_000),
-        ))
+        .timeout(Duration::from_millis(timeout_ms.saturating_add(5_000)))
         .build()?;
 
     match command {
@@ -115,10 +110,8 @@ async fn run() -> Result<()> {
                 bail!("module must be between 1 and {MAX_MODULE_BYTES} bytes");
             }
 
-            let ores_adapter = read_optional_ores_adapter(
-                config.WASMX_DESKTOP_ORES_ADAPTER.as_deref(),
-            )
-            .await?;
+            let ores_adapter =
+                read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
@@ -205,9 +198,7 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>>
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
     if bytes.is_empty() || bytes.len() > MAX_ORES_ADAPTER_BYTES {
-        bail!(
-            "ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes"
-        );
+        bail!("ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes");
     }
     let value: Value = serde_json::from_slice(bytes).context("ORES adapter is not valid JSON")?;
     if !value.is_object() {
@@ -237,8 +228,7 @@ async fn print_json_response(mut response: reqwest::Response) -> Result<()> {
         let text = String::from_utf8_lossy(&body);
         bail!("daemon returned {status}: {text}");
     }
-    let value: Value =
-        serde_json::from_slice(&body).context("daemon response was not JSON")?;
+    let value: Value = serde_json::from_slice(&body).context("daemon response was not JSON")?;
     println!("{}", serde_json::to_string_pretty(&value)?);
     return Ok(());
 }
