@@ -312,8 +312,7 @@ async fn validate_optional_ores_receipt(
     if bytes.is_empty() || bytes.len() > MAX_ORES_RECEIPT_BYTES {
         bail!("ORES receipt must be between 1 and {MAX_ORES_RECEIPT_BYTES} bytes");
     }
-    let value: Value =
-        serde_json::from_slice(&bytes).context("ORES receipt is not valid JSON")?;
+    let value: Value = serde_json::from_slice(&bytes).context("ORES receipt is not valid JSON")?;
     if value.get("schema_version").and_then(Value::as_str)
         != Some("ores.lambda.wasm-artifact.receipt/v1")
     {
