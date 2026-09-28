@@ -184,7 +184,22 @@ async fn run() -> Result<()> {
                 bytes.len(),
                 adapter_supplied,
             )?;
-            println!("{}", serde_json::to_string_pretty(&value)?);
+            if config.WASMX_DESKTOP_ORES_RECEIPT.is_some() {
+                let ack = json!({
+                    "schema_version": "ores.lambda.runtime-deploy-ack/v1",
+                    "provider": "wasm_xprs",
+                    "tenant_id": tenant_id,
+                    "deployment_id": deployment_id,
+                    "artifact_sha256": expected_sha256,
+                    "artifact_bytes": bytes.len(),
+                    "adapter_verified": adapter_supplied,
+                    "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+                    "compiled": true
+                });
+                println!("{}", serde_json::to_string_pretty(&ack)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
         }
         "invoke" => {
             let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
@@ -516,6 +531,24 @@ mod tests {
         assert!(
             validate_deploy_ack(&bad, "tenant-a", "release-1", expected_sha256, 42, true,).is_err()
         );
+        return Ok(());
+    }
+
+    #[test]
+    fn ores_mode_ack_has_normalized_contract_shape() -> Result<()> {
+        let ack = json!({
+            "schema_version": "ores.lambda.runtime-deploy-ack/v1",
+            "provider": "wasm_xprs",
+            "tenant_id": "tenant-a",
+            "deployment_id": "release-1",
+            "artifact_sha256": "a".repeat(64),
+            "artifact_bytes": 42,
+            "adapter_verified": true,
+            "runtime_contract": "wasm-xprs.lambda-runtime/v1",
+            "compiled": true
+        });
+        assert_eq!(ack["schema_version"], "ores.lambda.runtime-deploy-ack/v1");
+        assert_eq!(ack["compiled"], true);
         return Ok(());
     }
 
