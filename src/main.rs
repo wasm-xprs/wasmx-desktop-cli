@@ -92,6 +92,14 @@ async fn run() -> Result<()> {
                 .await?;
             print_json_response(response).await?;
         }
+        "list" => {
+            let response = client
+                .get(format!("{base_url}/v1/deployments"))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            print_json_response(response).await?;
+        }
         "deploy" => {
             let tenant_id =
                 required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
@@ -172,7 +180,7 @@ async fn run() -> Result<()> {
             println!("deleted {tenant_id}/{deployment_id}");
         }
         _ => {
-            bail!("command required: status, deploy, invoke or delete");
+            bail!("command required: status, list, deploy, invoke or delete");
         }
     }
 
