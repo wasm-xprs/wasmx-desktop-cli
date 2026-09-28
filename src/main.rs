@@ -79,6 +79,7 @@ async fn run() -> Result<()> {
     let token = read_token()?;
     let base_url = validate_daemon_url(&config.WASMX_DESKTOP_DAEMON_URL)?;
     let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_millis(timeout_ms.saturating_add(5_000)))
         .build()?;
 
@@ -99,9 +100,21 @@ async fn run() -> Result<()> {
                 .await?;
             print_json_response(response).await?;
         }
+        "inspect" => {
+            let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let response = client
+                .get(format!(
+                    "{base_url}/v1/deployments/{tenant_id}/{deployment_id}"
+                ))
+                .bearer_auth(&token)
+                .send()
+                .await?;
+            print_json_response(response).await?;
+        }
         "deploy" => {
-            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let module_path = required(config.WASMX_DESKTOP_MODULE, "--module")?;
             let bytes = tokio::fs::read(&module_path)
                 .await
@@ -130,8 +143,8 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "invoke" => {
-            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let payload_json = config.WASMX_DESKTOP_PAYLOAD.unwrap_or_else(|| json!({}));
             let fuel = config
                 .WASMX_DESKTOP_FUEL
@@ -159,8 +172,8 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "delete" => {
-            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let tenant_id = validated_id(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = validated_id(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let response = client
                 .delete(format!(
                     "{base_url}/v1/deployments/{tenant_id}/{deployment_id}"
@@ -176,7 +189,7 @@ async fn run() -> Result<()> {
             println!("deleted {tenant_id}/{deployment_id}");
         }
         _ => {
-            bail!("command required: status, list, deploy, invoke or delete");
+            bail!("command required: status, list, inspect, deploy, invoke or delete");
         }
     }
 
@@ -237,6 +250,20 @@ fn required(value: Option<String>, flag: &str) -> Result<String> {
     return value
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow!("{flag} is required"));
+}
+
+fn validated_id(value: Option<String>, flag: &str) -> Result<String> {
+    let value = required(value, flag)?;
+    let valid = value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        && value != "."
+        && value != "..";
+    if !valid {
+        bail!("{flag} must contain only ASCII letters, digits, '.', '_' or '-'");
+    }
+    Ok(value)
 }
 
 fn validate_daemon_url(value: &str) -> Result<String> {
@@ -303,6 +330,13 @@ fn read_token() -> Result<String> {
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         bail!("daemon token path must be a regular non-symlink file");
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            bail!("daemon token file must not be accessible by group or other users");
+        }
+    }
     let token = std::fs::read_to_string(&path)
         .with_context(|| format!("cannot read daemon token at {}", path.display()))?;
     let token = token.trim();
@@ -329,6 +363,17 @@ mod tests {
         assert!(validate_daemon_url("http://example.com:8765").is_err());
         assert!(validate_daemon_url("https://example.com/api").is_err());
         assert!(validate_daemon_url("ftp://127.0.0.1").is_err());
+        return Ok(());
+    }
+
+    #[test]
+    fn identifiers_are_restricted_before_path_interpolation() -> Result<()> {
+        assert_eq!(
+            validated_id(Some("tenant-1.alpha".to_owned()), "--tenant")?,
+            "tenant-1.alpha"
+        );
+        assert!(validated_id(Some("../escape".to_owned()), "--tenant").is_err());
+        assert!(validated_id(Some("a/b".to_owned()), "--tenant").is_err());
         return Ok(());
     }
 
