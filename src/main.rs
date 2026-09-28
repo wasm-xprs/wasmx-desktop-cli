@@ -7,6 +7,7 @@ use std::{collections::HashMap, env, path::PathBuf, time::Duration};
 use uuid::Uuid;
 
 const MAX_MODULE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_ORES_ADAPTER_BYTES: usize = 1024 * 1024;
 
 #[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
@@ -16,6 +17,7 @@ struct CliConfig {
     WASMX_DESKTOP_TENANT_ID: Option<String>,
     WASMX_DESKTOP_DEPLOYMENT_ID: Option<String>,
     WASMX_DESKTOP_MODULE: Option<String>,
+    WASMX_DESKTOP_ORES_ADAPTER: Option<String>,
     WASMX_DESKTOP_PAYLOAD: Option<Value>,
     WASMX_DESKTOP_FUEL: Option<i64>,
     FLAGS2ENV_COMMAND: Option<String>,
@@ -101,25 +103,29 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "deploy" => {
-            let tenant_id =
-                required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
-            let module_path =
-                required(config.WASMX_DESKTOP_MODULE, "--module")?;
+            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let module_path = required(config.WASMX_DESKTOP_MODULE, "--module")?;
             let bytes = tokio::fs::read(&module_path)
                 .await
                 .with_context(|| format!("cannot read module {module_path}"))?;
             if bytes.is_empty() || bytes.len() > MAX_MODULE_BYTES {
-                bail!(
-                    "module must be between 1 and {MAX_MODULE_BYTES} bytes"
-                );
+                bail!("module must be between 1 and {MAX_MODULE_BYTES} bytes");
             }
-            let body = json!({
+
+            let ores_adapter = read_optional_ores_adapter(
+                config.WASMX_DESKTOP_ORES_ADAPTER.as_deref(),
+            )
+            .await?;
+            let mut body = json!({
                 "tenant_id": tenant_id,
                 "deployment_id": deployment_id,
                 "wasm_base64": BASE64.encode(bytes),
             });
+            if let Some(adapter) = ores_adapter {
+                body["ores_adapter"] = adapter;
+            }
+
             let response = client
                 .post(format!("{base_url}/v1/deploy"))
                 .bearer_auth(&token)
@@ -129,19 +135,16 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "invoke" => {
-            let tenant_id =
-                required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
-            let payload_json =
-                config.WASMX_DESKTOP_PAYLOAD.unwrap_or_else(|| json!({}));
+            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let payload_json = config.WASMX_DESKTOP_PAYLOAD.unwrap_or_else(|| json!({}));
             let fuel = config
                 .WASMX_DESKTOP_FUEL
                 .map(|value| {
-                    u64::try_from(value)
+                    return u64::try_from(value)
                         .ok()
                         .filter(|fuel| *fuel > 0)
-                        .ok_or_else(|| anyhow!("--fuel must be greater than zero"))
+                        .ok_or_else(|| anyhow!("--fuel must be greater than zero"));
                 })
                 .transpose()?;
             let body = json!({
@@ -161,10 +164,8 @@ async fn run() -> Result<()> {
             print_json_response(response).await?;
         }
         "delete" => {
-            let tenant_id =
-                required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
-            let deployment_id =
-                required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
+            let tenant_id = required(config.WASMX_DESKTOP_TENANT_ID, "--tenant")?;
+            let deployment_id = required(config.WASMX_DESKTOP_DEPLOYMENT_ID, "--deployment")?;
             let response = client
                 .delete(format!(
                     "{base_url}/v1/deployments/{tenant_id}/{deployment_id}"
@@ -184,7 +185,33 @@ async fn run() -> Result<()> {
         }
     }
 
-    Ok(())
+    return Ok(());
+}
+
+async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<Value>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if path.trim().is_empty() {
+        bail!("--ores-adapter must name a readable JSON file");
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("cannot read ORES adapter {path}"))?;
+    return parse_ores_adapter_bytes(&bytes).map(Some);
+}
+
+fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
+    if bytes.is_empty() || bytes.len() > MAX_ORES_ADAPTER_BYTES {
+        bail!(
+            "ORES adapter must be between 1 and {MAX_ORES_ADAPTER_BYTES} bytes"
+        );
+    }
+    let value: Value = serde_json::from_slice(bytes).context("ORES adapter is not valid JSON")?;
+    if !value.is_object() {
+        bail!("ORES adapter must be a JSON object");
+    }
+    return Ok(value);
 }
 
 async fn print_json_response(response: reqwest::Response) -> Result<()> {
@@ -193,20 +220,19 @@ async fn print_json_response(response: reqwest::Response) -> Result<()> {
     if !status.is_success() {
         bail!("daemon returned {status}: {body}");
     }
-    let value: Value =
-        serde_json::from_str(&body).context("daemon response was not JSON")?;
+    let value: Value = serde_json::from_str(&body).context("daemon response was not JSON")?;
     println!("{}", serde_json::to_string_pretty(&value)?);
-    Ok(())
+    return Ok(());
 }
 
 fn required(value: Option<String>, flag: &str) -> Result<String> {
-    value
+    return value
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| anyhow!("{flag} is required"))
+        .ok_or_else(|| anyhow!("{flag} is required"));
 }
 
 fn trim_url(value: &str) -> &str {
-    value.trim_end_matches('/')
+    return value.trim_end_matches('/');
 }
 
 fn resolve_config_path() -> Result<PathBuf> {
@@ -238,17 +264,30 @@ fn read_token() -> Result<String> {
     let path = if let Some(path) = env::var_os("WASMX_DESKTOP_TOKEN_FILE") {
         PathBuf::from(path)
     } else {
-        let home =
-            env::var_os("HOME").ok_or_else(|| anyhow!("HOME is required"))?;
+        let home = env::var_os("HOME").ok_or_else(|| anyhow!("HOME is required"))?;
         PathBuf::from(home).join(".wasm-xprs/daemon/token")
     };
     let token = std::fs::read_to_string(&path)
-        .with_context(|| {
-            format!("cannot read daemon token at {}", path.display())
-        })?;
+        .with_context(|| format!("cannot read daemon token at {}", path.display()))?;
     let token = token.trim();
     if token.len() < 32 {
         bail!("daemon token is invalid");
     }
-    Ok(token.to_owned())
+    return Ok(token.to_owned());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ores_adapter_must_be_a_bounded_json_object() -> Result<()> {
+        let adapter = parse_ores_adapter_bytes(
+            br#"{"schema_version":"ores.lambda.adapter/v1","provider":"wasm_xprs"}"#,
+        )?;
+        assert_eq!(adapter["provider"], "wasm_xprs");
+        assert!(parse_ores_adapter_bytes(b"[]").is_err());
+        assert!(parse_ores_adapter_bytes(b"").is_err());
+        return Ok(());
+    }
 }
