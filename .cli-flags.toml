@@ -12,6 +12,9 @@ ignore = ["WASMX_DESKTOP_TOKEN"]
 [commands.status]
 help = "Show local wasm-xprs Wasmtime daemon status."
 
+[commands.self-update]
+help = "Update wasmx-desktop-cli using the shared ORES self-update path."
+
 [commands.doctor]
 help = "Verify daemon readiness, authentication, and the expected wasm-xprs runtime contract."
 
