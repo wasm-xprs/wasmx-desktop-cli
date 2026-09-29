@@ -152,7 +152,7 @@ async fn run() -> Result<()> {
             let ores_adapter =
                 read_optional_ores_adapter(config.WASMX_DESKTOP_ORES_ADAPTER.as_deref()).await?;
             let adapter_supplied = ores_adapter.is_some();
-            let expected_sha256 = format!("{:x}", Sha256::digest(&bytes));
+            let expected_sha256 = sha256_hex(&bytes);
             let receipt_bytes = validate_optional_ores_receipt(
                 config.WASMX_DESKTOP_ORES_RECEIPT.as_deref(),
                 "wasm_xprs",
@@ -273,9 +273,20 @@ async fn read_optional_ores_adapter(path: Option<&str>) -> Result<Option<OresAda
     let value = parse_ores_adapter_bytes(&bytes)?;
     return Ok(Some(OresAdapterInput {
         value,
-        sha256: format!("{:x}", Sha256::digest(&bytes)),
+        sha256: sha256_hex(&bytes),
         bytes,
     }));
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    return encoded;
 }
 
 fn parse_ores_adapter_bytes(bytes: &[u8]) -> Result<Value> {
@@ -545,6 +556,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sha256_hex_is_canonical_lowercase() {
+        assert_eq!(
+            sha256_hex(b"wasmx"),
+            "1d47fb365312446e2c62ef0e85f757af3c123f88cb1ca846c36bf7ebae57ee9d"
+        );
+    }
+
+    #[test]
     fn doctor_rejects_wrong_runtime_contract() -> Result<()> {
         let good = json!({
             "runtime": "wasmtime",
@@ -656,7 +675,7 @@ mod tests {
 
     #[test]
     fn sha256_is_stable_for_uploaded_module_bytes() {
-        let digest = format!("{:x}", Sha256::digest(b"wasmx"));
+        let digest = sha256_hex(b"wasmx");
         assert_eq!(
             digest,
             "1d47fb365312446e2c62ef0e85f757af3c123f88cb1ca846c36bf7ebae57ee9d"
