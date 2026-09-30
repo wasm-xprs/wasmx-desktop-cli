@@ -22,27 +22,21 @@ jobs:
         with:
           toolchain: 1.90.0
           components: clippy,rustfmt
-      - name: Materialize lock and enforce locked CI
+      - name: Materialize and prove lockfile
         run: |
           set -euo pipefail
           cargo generate-lockfile
-          sed -i 's/cargo check --all-targets/cargo check --locked --all-targets/' .github/workflows/ci.yml
-          sed -i 's/cargo test --all-targets/cargo test --locked --all-targets/' .github/workflows/ci.yml
-          sed -i 's/cargo clippy --all-targets/cargo clippy --locked --all-targets/' .github/workflows/ci.yml
           cargo fmt --all -- --check
           cargo check --locked --all-targets
           cargo test --locked --all-targets
           cargo clippy --locked --all-targets -- -D warnings
-      - name: Commit source-only result
+      - name: Commit lockfile only
         run: |
           set -euo pipefail
           test -f Cargo.lock
-          grep -F 'cargo check --locked --all-targets' .github/workflows/ci.yml
-          grep -F 'cargo test --locked --all-targets' .github/workflows/ci.yml
-          grep -F 'cargo clippy --locked --all-targets -- -D warnings' .github/workflows/ci.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add Cargo.lock .github/workflows/ci.yml
-          git rm .github/workflows/materialize-cargo-lock.yml
+          git add Cargo.lock
+          git diff --cached --quiet && exit 0
           git commit -m 'build: pin CLI dependency graph'
           git push origin HEAD:hardening/pin-cli-cargo-lock-20260930
