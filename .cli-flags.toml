@@ -122,7 +122,7 @@ env = "WASMX_DESKTOP_DAEMON_URL"
 aliases = ["url"]
 short = "u"
 type = "string"
-default = "http://127.0.0.1:8765"
+default = "http://127.0.0.1:8766"
 help = "Loopback URL of wasmx-desktop-daemon."
 
 [flags.timeout]
